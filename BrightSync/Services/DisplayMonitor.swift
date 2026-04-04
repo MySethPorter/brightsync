@@ -7,6 +7,7 @@ import os.log
 private let logger = Logger(subsystem: "com.eriknielsen.brightsync", category: "DisplayMonitor")
 
 /// Enumerates connected displays and watches for connect/disconnect events.
+/// Uses NSScreen.screens order to match Apple's display numbering.
 @MainActor
 final class DisplayMonitor: ObservableObject {
     @Published var displays: [DisplayInfo] = []
@@ -37,25 +38,18 @@ final class DisplayMonitor: ObservableObject {
     }
 
     func refresh() {
-        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 16)
-        var count: UInt32 = 0
-        CGGetOnlineDisplayList(16, &displayIDs, &count)
-
         let service = DisplayService.shared
-        displays = (0..<Int(count)).compactMap { i in
-            let id = displayIDs[i]
-            let name = screenName(for: id) ?? "Display \(i + 1)"
-            guard let brightness = service.getBrightness(for: id) else { return nil }
-            return DisplayInfo(id: id, name: name, brightness: brightness)
+
+        // Enumerate via NSScreen.screens to preserve Apple's display ordering and naming
+        displays = NSScreen.screens.compactMap { screen in
+            guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
+                return nil
+            }
+            let name = screen.localizedName
+            guard let brightness = service.getBrightness(for: displayID) else { return nil }
+            return DisplayInfo(id: displayID, name: name, brightness: brightness)
         }
 
         logger.info("Found \(self.displays.count) controllable display(s)")
-    }
-
-    private func screenName(for displayID: CGDirectDisplayID) -> String? {
-        NSScreen.screens.first { screen in
-            let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-            return num == displayID
-        }?.localizedName
     }
 }

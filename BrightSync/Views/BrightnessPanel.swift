@@ -5,16 +5,12 @@ private let cardWidth: CGFloat = 312
 struct BrightnessPanel: View {
     @StateObject private var viewModel = BrightnessViewModel()
 
-    private var sortedDisplays: [DisplayInfo] {
-        viewModel.displays.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
     var body: some View {
         VStack(spacing: 8) {
             if viewModel.displays.isEmpty {
                 emptyState
             } else {
-                ForEach(sortedDisplays) { display in
+                ForEach(viewModel.displays) { display in
                     DisplaySliderCard(display: display) { newValue in
                         viewModel.setBrightness(for: display.id, to: newValue)
                     }
