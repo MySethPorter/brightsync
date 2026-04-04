@@ -6,8 +6,6 @@ import os.log
 
 private let logger = Logger(subsystem: "com.eriknielsen.brightsync", category: "DisplayMonitor")
 
-/// Enumerates connected displays and watches for connect/disconnect events.
-/// Uses NSScreen.screens order to match Apple's display numbering.
 @MainActor
 final class DisplayMonitor: ObservableObject {
     @Published var displays: [DisplayInfo] = []
@@ -31,7 +29,7 @@ final class DisplayMonitor: ObservableObject {
     @objc private func screenChanged() {
         debounceTask?.cancel()
         debounceTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms debounce
+            try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
             refresh()
         }
@@ -40,14 +38,40 @@ final class DisplayMonitor: ObservableObject {
     func refresh() {
         let service = DisplayService.shared
 
-        // Enumerate via NSScreen.screens to preserve Apple's display ordering and naming
-        displays = NSScreen.screens.compactMap { screen in
+        var infos: [(displayID: CGDirectDisplayID, baseName: String, isMain: Bool, brightness: Float)] = []
+
+        for screen in NSScreen.screens {
             guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-                return nil
+                continue
             }
-            let name = screen.localizedName
-            guard let brightness = service.getBrightness(for: displayID) else { return nil }
-            return DisplayInfo(id: displayID, name: name, brightness: brightness)
+            guard let brightness = service.getBrightness(for: displayID) else { continue }
+            // Strip existing numbering like " (2)" from the localized name
+            let baseName = screen.localizedName.replacingOccurrences(of: #"\s*\(\d+\)$"#, with: "", options: .regularExpression)
+            let isMain = (screen == NSScreen.main)
+            infos.append((displayID, baseName, isMain, brightness))
+        }
+
+        // Renumber displays that share the same base name, with main display as (1)
+        var nameCount: [String: Int] = [:]
+        for info in infos { nameCount[info.baseName, default: 0] += 1 }
+
+        var nameCounter: [String: Int] = [:]
+        // Sort: main display first, then by display ID for stability
+        let sorted = infos.sorted { a, b in
+            if a.isMain != b.isMain { return a.isMain }
+            return a.displayID < b.displayID
+        }
+
+        displays = sorted.map { info in
+            let name: String
+            if nameCount[info.baseName, default: 0] > 1 {
+                let num = (nameCounter[info.baseName, default: 0]) + 1
+                nameCounter[info.baseName] = num
+                name = "\(info.baseName) (\(num))"
+            } else {
+                name = info.baseName
+            }
+            return DisplayInfo(id: info.displayID, name: name, brightness: info.brightness)
         }
 
         logger.info("Found \(self.displays.count) controllable display(s)")
