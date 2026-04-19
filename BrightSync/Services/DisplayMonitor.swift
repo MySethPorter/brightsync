@@ -27,10 +27,12 @@ final class DisplayMonitor: ObservableObject {
     }
 
     @objc private func screenChanged() {
+        logger.info("didChangeScreenParametersNotification fired")
         debounceTask?.cancel()
         debounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
+            logger.info("debounce elapsed, refreshing displays")
             refresh()
         }
     }

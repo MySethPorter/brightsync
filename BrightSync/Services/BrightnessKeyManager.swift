@@ -64,12 +64,14 @@ final class BrightnessKeyManager {
 
         for (id, current) in controllableIDs {
             if let last = lastKnownBrightness[id], abs(current - last) > 0.005 {
+                logger.info("poll: detected external change id=\(id) \(last) → \(current) syncEnabled=\(syncEnabled)")
                 changed = true
                 lastKnownBrightness[id] = current
 
                 // In sync mode: propagate to all other displays
                 if syncEnabled {
                     for (otherId, _) in controllableIDs where otherId != id {
+                        logger.info("poll: propagating to id=\(otherId) → \(current)")
                         service.setBrightness(for: otherId, to: current)
                         lastKnownBrightness[otherId] = current
                     }

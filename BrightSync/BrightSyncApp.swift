@@ -12,10 +12,14 @@ struct BrightSyncApp: App {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panel: FloatingPanel?
     private let brightnessKeyManager = BrightnessKeyManager()
+    // Owned here so migration/restore/re-apply run independent of panel visibility.
+    // Without this, display-change handling only exists while the popover is open.
+    private let brightnessViewModel = BrightnessViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -46,7 +50,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         let buttonFrame = button.window?.convertToScreen(button.frame) ?? .zero
 
-        let contentView = BrightnessPanel()
+        let contentView = BrightnessPanel(viewModel: brightnessViewModel)
         let hostingView = NSHostingView(rootView: contentView)
 
         // Use autolayout so the hosting view drives the panel size dynamically

@@ -3,7 +3,7 @@ import SwiftUI
 private let cardWidth: CGFloat = 312
 
 struct BrightnessPanel: View {
-    @StateObject private var viewModel = BrightnessViewModel()
+    @ObservedObject var viewModel: BrightnessViewModel
 
     var body: some View {
         VStack(spacing: 8) {
