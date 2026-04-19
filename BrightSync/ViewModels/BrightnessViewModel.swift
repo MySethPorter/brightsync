@@ -20,6 +20,7 @@ final class BrightnessViewModel: ObservableObject {
     private let monitor = DisplayMonitor()
     private let service = DisplayService.shared
     private var cancellables = Set<AnyCancellable>()
+    private var reapplyTask: Task<Void, Never>?
 
     init() {
         syncEnabled = UserDefaults.standard.bool(forKey: "syncEnabled")
@@ -73,23 +74,47 @@ final class BrightnessViewModel: ObservableObject {
         let saved = savedBrightness()
         displays = newDisplays.map { display in
             var d = display
-            if let savedValue = saved[String(d.id)] {
+            if let savedValue = saved[d.stableKey] {
                 d.brightness = savedValue
                 service.setBrightness(for: d.id, to: savedValue)
             }
             return d
+        }
+
+        // macOS can override brightness during/after Sidecar reconfig; re-apply once
+        // to win the race. Snapshot current active IDs so we don't touch displays
+        // that dropped offline (e.g. Sidecar disconnected) in the interim.
+        let snapshot: [(CGDirectDisplayID, Float)] = displays.compactMap { d in
+            guard let v = saved[d.stableKey] else { return nil }
+            return (d.id, v)
+        }
+        reapplyTask?.cancel()
+        reapplyTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard let self, !Task.isCancelled else { return }
+            let online = Self.activeDisplayIDs()
+            for (id, value) in snapshot where online.contains(id) {
+                self.service.setBrightness(for: id, to: value)
+            }
         }
     }
 
     private func persistBrightness() {
         var dict: [String: Float] = [:]
         for display in displays {
-            dict[String(display.id)] = display.brightness
+            dict[display.stableKey] = display.brightness
         }
-        UserDefaults.standard.set(dict, forKey: "displayBrightness")
+        UserDefaults.standard.set(dict, forKey: "displayBrightnessV2")
     }
 
     private func savedBrightness() -> [String: Float] {
-        UserDefaults.standard.dictionary(forKey: "displayBrightness") as? [String: Float] ?? [:]
+        UserDefaults.standard.dictionary(forKey: "displayBrightnessV2") as? [String: Float] ?? [:]
+    }
+
+    private static func activeDisplayIDs() -> Set<CGDirectDisplayID> {
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(16, &ids, &count) == .success else { return [] }
+        return Set(ids.prefix(Int(count)))
     }
 }
