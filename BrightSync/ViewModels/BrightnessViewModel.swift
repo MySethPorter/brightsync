@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import CoreGraphics
 import Foundation
@@ -21,6 +22,8 @@ final class BrightnessViewModel: ObservableObject {
     private let service = DisplayService.shared
     private var cancellables = Set<AnyCancellable>()
     private var reapplyTask: Task<Void, Never>?
+    private var persistDebounceTask: Task<Void, Never>?
+    private var reconfigWindowEnd: Date?
     private var didMigrate = false
 
     init() {
@@ -35,10 +38,24 @@ final class BrightnessViewModel: ObservableObject {
             .store(in: &cancellables)
 
         // Refresh slider positions when brightness changes externally (F1/F2 keys)
+        // and debounce-persist the result so F1/F2 intent isn't lost on the next
+        // display reconfiguration.
         NotificationCenter.default.publisher(for: .brightnessChanged)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.refreshBrightness()
+                self?.scheduleDebouncedPersist()
+            }
+            .store(in: &cancellables)
+
+        // Treat screen reconfigurations (Sidecar connect/disconnect, physical
+        // display changes) as a transient window — suppress F1/F2-path persist
+        // during it so mid-transition brightness values don't overwrite the
+        // user's last stable intent.
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.reconfigWindowEnd = Date().addingTimeInterval(3.0)
             }
             .store(in: &cancellables)
     }
@@ -155,6 +172,20 @@ final class BrightnessViewModel: ObservableObject {
 
     private func savedBrightness() -> [String: Float] {
         UserDefaults.standard.dictionary(forKey: "displayBrightnessV2") as? [String: Float] ?? [:]
+    }
+
+    private func scheduleDebouncedPersist() {
+        persistDebounceTask?.cancel()
+        persistDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard let self, !Task.isCancelled else { return }
+            if let end = self.reconfigWindowEnd, Date() < end {
+                logger.info("debounced persist suppressed — inside reconfig window")
+                return
+            }
+            logger.info("debounced persist: writing \(self.displays.count) displays to V2")
+            self.persistBrightness()
+        }
     }
 
     private static func activeDisplayIDs() -> Set<CGDirectDisplayID> {
