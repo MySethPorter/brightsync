@@ -22,6 +22,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let brightnessViewModel = BrightnessViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // AppKit persists the Cmd+drag X-offset under "NSStatusItem Preferred Position …"
+        // and trusts it on launch. If the user dragged the icon while a wider display was
+        // attached (e.g. Studio Display) and later launches without it, the saved offset
+        // points off-screen and the icon renders nowhere visible.
+        Self.resetStaleStatusItemPositions()
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: "BrightSync")
@@ -38,6 +44,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         brightnessKeyManager.stop()
+    }
+
+    private static func resetStaleStatusItemPositions() {
+        let defaults = UserDefaults.standard
+        let prefix = "NSStatusItem Preferred Position"
+        let maxScreenWidth = NSScreen.screens.map { $0.frame.width }.max() ?? 0
+        guard maxScreenWidth > 0 else { return }
+
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(prefix) {
+            guard let offset = (value as? NSNumber)?.doubleValue else { continue }
+            if offset > maxScreenWidth {
+                logger.info("Resetting stale status item position '\(key, privacy: .public)' = \(offset) (max screen width \(maxScreenWidth))")
+                defaults.removeObject(forKey: key)
+            }
+        }
     }
 
     @objc private func togglePanel() {
